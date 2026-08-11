@@ -8,6 +8,8 @@ Expected ALIKED session I/O (defaults match the fatih/aliked ONNX export):
     input:  `image`       — float32 NCHW, RGB, normalized to [0, 1]
     output: `keypoints`   — float32 (N, 2) pixel coordinates (x, y)
     output: `descriptors` — float32 (N, D)
+    output: detection scores — float32 (N,); optional, pass `aliked_scores_name`
+            if the export emits them (used to pick the top `max_keypoints`)
 
 Expected LightGlue session I/O (defaults match the community ONNX export):
     inputs:  `kpts0`, `kpts1`   — float32 (1, N, 2) pixel coordinates
@@ -61,6 +63,26 @@ def _select_providers() -> list[str]:
     return [p for p in _PREFERRED_PROVIDERS if p in available]
 
 
+def _truncate_keypoints(
+    keypoints: np.ndarray,
+    descriptors: np.ndarray,
+    scores: np.ndarray | None,
+    max_keypoints: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Keep at most `max_keypoints` keypoint/descriptor rows, aligned.
+
+    With `scores`, keeps the highest-scoring rows (descending score order).
+    Without scores, keeps the first rows — ALIKED exports typically emit
+    keypoints already sorted by detection score, so this is the same cut.
+    """
+    if len(keypoints) <= max_keypoints:
+        return keypoints, descriptors
+    if scores is None:
+        return keypoints[:max_keypoints], descriptors[:max_keypoints]
+    top = np.argsort(scores)[::-1][:max_keypoints]
+    return keypoints[top], descriptors[top]
+
+
 class AlikedLightGlueReranker:
     """Geometric reranker: ALIKED keypoints + LightGlue matching + RANSAC homography."""
 
@@ -72,6 +94,7 @@ class AlikedLightGlueReranker:
         aliked_input_name: str = "image",
         aliked_keypoints_name: str = "keypoints",
         aliked_descriptors_name: str = "descriptors",
+        aliked_scores_name: str | None = None,
         lightglue_kpts0_name: str = "kpts0",
         lightglue_kpts1_name: str = "kpts1",
         lightglue_desc0_name: str = "desc0",
@@ -87,6 +110,7 @@ class AlikedLightGlueReranker:
         self._aliked_input_name = aliked_input_name
         self._aliked_keypoints_name = aliked_keypoints_name
         self._aliked_descriptors_name = aliked_descriptors_name
+        self._aliked_scores_name = aliked_scores_name
         self._lightglue_kpts0_name = lightglue_kpts0_name
         self._lightglue_kpts1_name = lightglue_kpts1_name
         self._lightglue_desc0_name = lightglue_desc0_name
@@ -95,20 +119,30 @@ class AlikedLightGlueReranker:
         self._lightglue_scores_name = lightglue_scores_name
 
     def _extract(self, image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
-        """Run ALIKED, returning (keypoints (N,2) pixel coords, descriptors (N,D))."""
+        """Run ALIKED, returning (keypoints (N,2) pixel coords, descriptors (N,D)).
+
+        Truncates to at most `self.max_keypoints` rows: by detection score when
+        the export names a scores output (`aliked_scores_name`), otherwise by
+        keeping the first rows (ALIKED exports typically emit score-sorted
+        keypoints).
+        """
         array = _preprocess(image)
-        outputs = self._aliked_session.run(
-            [self._aliked_keypoints_name, self._aliked_descriptors_name],
-            {self._aliked_input_name: array},
-        )
-        keypoints, descriptors = outputs[0], outputs[1]
-        keypoints = np.asarray(keypoints, dtype=np.float32)
-        descriptors = np.asarray(descriptors, dtype=np.float32)
+        output_names = [self._aliked_keypoints_name, self._aliked_descriptors_name]
+        if self._aliked_scores_name is not None:
+            output_names.append(self._aliked_scores_name)
+        outputs = self._aliked_session.run(output_names, {self._aliked_input_name: array})
+        keypoints = np.asarray(outputs[0], dtype=np.float32)
+        descriptors = np.asarray(outputs[1], dtype=np.float32)
+        scores = None
+        if self._aliked_scores_name is not None:
+            scores = np.asarray(outputs[2], dtype=np.float32)
+            if scores.ndim == 2:  # strip batch dim if present: (1, N) -> (N,)
+                scores = scores[0]
         if keypoints.ndim == 3:  # strip batch dim if present: (1, N, 2) -> (N, 2)
             keypoints = keypoints[0]
         if descriptors.ndim == 3:
             descriptors = descriptors[0]
-        return keypoints, descriptors
+        return _truncate_keypoints(keypoints, descriptors, scores, self.max_keypoints)
 
     def _match_keypoints(
         self,

@@ -65,6 +65,46 @@ def test_rerank_only_top_n_returned():
     assert result[0].record_id == "A"  # tie on inliers, highest cosine wins
 
 
+def test_truncate_keypoints_keeps_top_scores_aligned():
+    # Needs the ml extra (cv2/onnxruntime) to import the module, but no model weights.
+    aliked = pytest.importorskip("deco.rerank.aliked")
+
+    kpts = np.arange(20, dtype=np.float32).reshape(10, 2)  # row i = [2i, 2i+1]
+    descs = np.arange(30, dtype=np.float32).reshape(10, 3)  # row i = [3i, 3i+1, 3i+2]
+    scores = np.array([0.1, 0.9, 0.3, 0.8, 0.2, 0.7, 0.05, 0.6, 0.4, 0.5], dtype=np.float32)
+
+    out_kpts, out_descs = aliked._truncate_keypoints(kpts, descs, scores, max_keypoints=4)
+
+    # Rows 1, 3, 5, 7 hold the four highest scores (0.9, 0.8, 0.7, 0.6).
+    assert out_kpts.tolist() == kpts[[1, 3, 5, 7]].tolist()
+    assert out_descs.tolist() == descs[[1, 3, 5, 7]].tolist()
+
+
+def test_truncate_keypoints_without_scores_keeps_first_rows():
+    aliked = pytest.importorskip("deco.rerank.aliked")
+
+    kpts = np.arange(20, dtype=np.float32).reshape(10, 2)
+    descs = np.arange(30, dtype=np.float32).reshape(10, 3)
+
+    out_kpts, out_descs = aliked._truncate_keypoints(kpts, descs, None, max_keypoints=4)
+
+    assert out_kpts.tolist() == kpts[:4].tolist()
+    assert out_descs.tolist() == descs[:4].tolist()
+
+
+def test_truncate_keypoints_noop_when_under_limit():
+    aliked = pytest.importorskip("deco.rerank.aliked")
+
+    kpts = np.arange(6, dtype=np.float32).reshape(3, 2)
+    descs = np.arange(9, dtype=np.float32).reshape(3, 3)
+    scores = np.array([0.3, 0.2, 0.1], dtype=np.float32)
+
+    out_kpts, out_descs = aliked._truncate_keypoints(kpts, descs, scores, max_keypoints=4)
+
+    assert out_kpts.tolist() == kpts.tolist()
+    assert out_descs.tolist() == descs.tolist()
+
+
 @pytest.mark.integration
 def test_aliked_lightglue_reranker_matches_rotated_self_copy():
     aliked_path = os.environ.get("DECO_ALIKED_ONNX")
