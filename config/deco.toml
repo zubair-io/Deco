@@ -7,7 +7,7 @@ top_k = 50
 rerank_top_n = 5
 
 [ingest]
-rate_limit_rps = 2.0
+rate_limit_rps = 1.0
 max_backoff_s = 60.0
 
 [embedding]
