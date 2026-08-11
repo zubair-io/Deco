@@ -1,0 +1,17 @@
+[gate]
+min_cosine = 0.55
+min_inliers = 30
+
+[retrieval]
+top_k = 50
+rerank_top_n = 5
+
+[ingest]
+rate_limit_rps = 2.0
+max_backoff_s = 60.0
+
+[embedding]
+model_version = "dinov2-vitl14-onnx-v1"
+
+[paths]
+image_cache_dir = "/mnt/truenas/deco/images"
