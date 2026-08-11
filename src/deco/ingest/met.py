@@ -1,14 +1,18 @@
 """Ingest adapter for the Metropolitan Museum of Art open-access CSV + Collection API."""
 
 import csv
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
+from pydantic import ValidationError
 
 from deco.records import Record
 
 OBJECT_API_URL = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
+
+logger = logging.getLogger(__name__)
 
 
 class MetAdapter:
@@ -25,18 +29,27 @@ class MetAdapter:
                 if row.get("Is Public Domain") != "True":
                     continue
                 wikidata_id = row.get("Wikidata URL") or None
-                yield Record(
-                    source=self.source,
-                    source_object_id=row["Object ID"],
-                    title=row["Title"],
-                    artist=row["Artist Display Name"],
-                    date=row["Object Date"],
-                    medium=row["Medium"],
-                    accession_number=row["Object Number"],
-                    image_url=None,
-                    license="CC0",
-                    wikidata_id=wikidata_id,
-                )
+                try:
+                    record = Record(
+                        source=self.source,
+                        source_object_id=row["Object ID"],
+                        title=row["Title"],
+                        artist=row["Artist Display Name"],
+                        date=row["Object Date"],
+                        medium=row["Medium"],
+                        accession_number=row["Object Number"],
+                        image_url=None,
+                        license="CC0",
+                        wikidata_id=wikidata_id,
+                    )
+                except (KeyError, ValidationError):
+                    logger.warning(
+                        "Skipping malformed Met CSV row (line %d, Object ID %r)",
+                        reader.line_num,
+                        row.get("Object ID"),
+                    )
+                    continue
+                yield record
 
     def resolve_image_url(self, source_object_id: str) -> str | None:
         url = OBJECT_API_URL.format(object_id=source_object_id)
