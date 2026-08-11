@@ -20,7 +20,8 @@ _NO_IMAGE_DETAIL = (
     "no image provided: send a multipart file field 'image' or a JSON body {'image_b64': '...'}"
 )
 _BAD_IMAGE_DETAIL = "could not decode image"
-_BAD_B64_DETAIL = "image_b64 is not valid base64"
+_BAD_B64_DETAIL = "image_b64 must be a base64-encoded string"
+_BAD_JSON_DETAIL = "request body is not valid JSON"
 
 
 async def _extract_image_bytes(request: Request) -> bytes | None:
@@ -34,10 +35,15 @@ async def _extract_image_bytes(request: Request) -> bytes | None:
         return await upload.read()
 
     if content_type.startswith("application/json"):
-        payload = await request.json()
+        try:
+            payload = await request.json()
+        except ValueError as exc:  # json.JSONDecodeError is a ValueError subclass
+            raise HTTPException(status_code=422, detail=_BAD_JSON_DETAIL) from exc
         b64 = payload.get("image_b64") if isinstance(payload, dict) else None
         if not b64:
             return None
+        if not isinstance(b64, str):
+            raise HTTPException(status_code=422, detail=_BAD_B64_DETAIL)
         try:
             return base64.b64decode(b64, validate=True)
         except (binascii.Error, ValueError) as exc:

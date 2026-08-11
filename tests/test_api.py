@@ -178,3 +178,38 @@ def test_identify_missing_image_returns_422():
     response = client.post("/identify", json={})
 
     assert response.status_code == 422
+
+
+def test_identify_malformed_json_body_returns_422():
+    pipeline = _real_pipeline(min_cosine=0.0, min_inliers=30, scores={"met:B": 50})
+    app = create_app(pipeline)
+    client = TestClient(app)
+
+    response = client.post(
+        "/identify", content=b"{not json", headers={"Content-Type": "application/json"}
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_identify_non_string_image_b64_returns_422():
+    pipeline = _real_pipeline(min_cosine=0.0, min_inliers=30, scores={"met:B": 50})
+    app = create_app(pipeline)
+    client = TestClient(app)
+
+    response = client.post("/identify", json={"image_b64": 123})
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_identify_corrupt_base64_string_returns_422():
+    pipeline = _real_pipeline(min_cosine=0.0, min_inliers=30, scores={"met:B": 50})
+    app = create_app(pipeline)
+    client = TestClient(app)
+
+    response = client.post("/identify", json={"image_b64": "!!!not-base64!!!"})
+
+    assert response.status_code == 422
+    assert "detail" in response.json()

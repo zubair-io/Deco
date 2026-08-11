@@ -109,6 +109,12 @@ def test_identify_not_confident_when_all_inliers_zero():
     result = pipeline.identify(query_img)
 
     assert result.confident is False
+    # The pipeline still carries the joined candidates when not confident;
+    # emptying `matches` is the API layer's job, not the pipeline's.
+    assert len(result.matches) == 3
+    assert {m.record.record_id for m in result.matches} == {"met:A", "met:B", "met:C"}
+    assert all(m.record == store.get(m.record.record_id) for m in result.matches)
+    assert all(m.inliers == 0 for m in result.matches)
 
 
 def test_identify_drops_candidates_missing_from_store(caplog):
