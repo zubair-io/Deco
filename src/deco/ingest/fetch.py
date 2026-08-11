@@ -8,6 +8,10 @@ from pathlib import Path
 import httpx
 
 _RETRY_STATUS_FLOOR = 500
+# 403 is retried alongside 429/5xx: the Met Collection API sits behind
+# Imperva/Incapsula bot protection that soft-blocks with 403 on burst traffic
+# rather than a hard auth failure (see docs/spikes/met-rate-limits.md).
+_RETRY_STATUSES = {403, 429}
 
 
 class RateLimiter:
@@ -46,7 +50,12 @@ def fetch_with_backoff(
     retries: int = 6,
     sleep: Callable[[float], None] = time.sleep,
 ) -> httpx.Response:
-    """GET `url`, retrying 429/5xx responses with exponential backoff.
+    """GET `url`, retrying 403/429/5xx responses with exponential backoff.
+
+    403 is retried because the Met Collection API's Incapsula bot-protection
+    layer returns a soft-block 403 under burst traffic rather than a hard
+    auth failure; treating it as terminal would wedge every resumed ingest
+    run at the same record.
 
     Backoff doubles starting at 1s, capped at `max_backoff_s`. After the
     initial attempt plus `retries` retries all fail, raises
@@ -57,7 +66,7 @@ def fetch_with_backoff(
     for attempt in range(retries + 1):
         limiter.wait()
         response = client.get(url)
-        if response.status_code == 429 or response.status_code >= _RETRY_STATUS_FLOOR:
+        if response.status_code in _RETRY_STATUSES or response.status_code >= _RETRY_STATUS_FLOOR:
             if attempt == retries:
                 response.raise_for_status()
             sleep(min(backoff, max_backoff_s))

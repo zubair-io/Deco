@@ -6,6 +6,7 @@ Also doubles as a thin CLI entry point:
 """
 
 import argparse
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,8 @@ from deco.records import RecordStore
 
 USER_AGENT = "deco-ingest/0.1 (github.com/zubair-io/Deco)"
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class IngestStats:
@@ -26,6 +29,7 @@ class IngestStats:
     images_fetched: int = 0
     images_cached: int = 0
     no_image: int = 0
+    failed: int = 0
 
 
 def run_ingest(
@@ -38,10 +42,18 @@ def run_ingest(
     """Ingest every record from `adapter` into `store`, caching its image via `cache`.
 
     Idempotent and resumable: a record already in `store` with an
-    `image_url` is never re-resolved against the source API, and an image
-    already present in `cache` is never re-downloaded. Records whose
-    primary image never resolves are skipped (not upserted) and counted in
-    `no_image`.
+    `image_url` is never re-resolved against the source API, but its
+    metadata is still refreshed from the current CSV row every run (merged
+    with the already-known `image_url`) so a nightly source refresh's
+    updated titles/artists land in `store` — the upsert is a cheap idempotent
+    replace. An image already present in `cache` is never re-downloaded.
+    Records whose primary image never resolves are skipped (not upserted)
+    and counted in `no_image`. A per-record image fetch that fails with a
+    non-retryable HTTP error status (e.g. a dead 404 image URL — expected at
+    non-trivial frequency across a 470K-object corpus) or a transport error
+    is logged, counted in `failed`, and does not abort the run: the record's
+    metadata (with its resolved `image_url`) is already upserted, so a later
+    run can retry the fetch without re-resolving.
     """
     limiter = RateLimiter(cfg.rate_limit_rps)
     stats = IngestStats()
@@ -58,15 +70,21 @@ def run_ingest(
             if not image_url:
                 stats.no_image += 1
                 continue
-            record = record.model_copy(update={"image_url": image_url})
-            store.upsert(record)
+
+        record = record.model_copy(update={"image_url": image_url})
+        store.upsert(record)
 
         if cache.has(record_id):
             stats.images_cached += 1
         else:
-            response = fetch_with_backoff(
-                client, image_url, limiter=limiter, max_backoff_s=cfg.max_backoff_s
-            )
+            try:
+                response = fetch_with_backoff(
+                    client, image_url, limiter=limiter, max_backoff_s=cfg.max_backoff_s
+                )
+            except (httpx.HTTPStatusError, httpx.TransportError):
+                logger.warning("failed to fetch image for %s", record_id, exc_info=True)
+                stats.failed += 1
+                continue
             cache.put(record_id, response.content)
             stats.images_fetched += 1
 
@@ -114,7 +132,7 @@ def main() -> None:
 
     print(
         f"records={stats.records} images_fetched={stats.images_fetched} "
-        f"images_cached={stats.images_cached} no_image={stats.no_image}"
+        f"images_cached={stats.images_cached} no_image={stats.no_image} failed={stats.failed}"
     )
 
 

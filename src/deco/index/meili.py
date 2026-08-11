@@ -10,8 +10,11 @@ Two semantics differ from `InMemoryVectorIndex` and are worth calling out:
 - `add` issues an asynchronous indexing task; Meilisearch does not guarantee
   the document is immediately visible to `has`/`search` afterwards.
 - `search` scores come from Meilisearch's semantic ranking (`_semanticScore`,
-  falling back to `_rankingScore`), which approximates but is not guaranteed
-  to be bit-identical to a plain cosine dot product.
+  falling back to `_rankingScore`). Meilisearch normalizes cosine similarity
+  to `(1 + cos) / 2` for cosine embedders, so these come back as a [0, 1]
+  ranking score rather than a cosine in [-1, 1]; `_score` maps it back via
+  `_ranking_score_to_cosine` so callers see the same cosine contract as every
+  other `VectorIndex` backend (see `deco.index.base.Hit`).
 """
 
 from typing import Any
@@ -76,8 +79,23 @@ class MeiliVectorIndex:
         return hits
 
 
+def _ranking_score_to_cosine(score: float) -> float:
+    """Map a Meilisearch [0, 1] ranking/semantic score to cosine similarity in [-1, 1].
+
+    Meilisearch normalizes cosine similarity to `(1 + cos) / 2` for cosine
+    embedders, so `cos = 2*score - 1` recovers the original similarity.
+    """
+    return 2.0 * score - 1.0
+
+
 def _score(hit: dict[str, Any]) -> float:
-    """Prefer Meilisearch's semantic (vector) score; fall back to the overall ranking score."""
+    """Prefer Meilisearch's semantic (vector) score; fall back to the overall ranking score.
+
+    Both are Meilisearch's normalized [0, 1] range; map to cosine similarity
+    before returning so this satisfies the `Hit.score` contract (cosine, [-1, 1]).
+    """
     if "_semanticScore" in hit:
-        return float(hit["_semanticScore"])
-    return float(hit.get("_rankingScore", 0.0))
+        raw = float(hit["_semanticScore"])
+    else:
+        raw = float(hit.get("_rankingScore", 0.0))
+    return _ranking_score_to_cosine(raw)

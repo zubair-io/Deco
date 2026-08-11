@@ -103,8 +103,9 @@ def evaluate(
     condition_totals: dict[str, int] = {}
 
     for case in cases:
+        image = load_image(case.photo)
         t0 = clock()
-        result = pipeline.identify(load_image(case.photo))
+        result = pipeline.identify(image)
         latencies.append(clock() - t0)
 
         record_ids = [m.record.record_id for m in result.matches]

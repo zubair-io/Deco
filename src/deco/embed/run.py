@@ -103,11 +103,21 @@ def main() -> None:
     parser.add_argument("--model", required=True, type=Path, help="path to the ONNX model export")
     parser.add_argument("--config", type=Path, default=None, help="path to deco.toml")
     parser.add_argument(
+        "--sink",
+        choices=["mongo", "meili"],
+        default="meili",
+        help="vector sink backend; 'meili' (default) writes to the same "
+        "Meilisearch index serve.py/eval.run search",
+    )
+    parser.add_argument(
         "--mongo-url", default=os.environ.get("MONGO_URL", "mongodb://localhost:27017")
     )
     parser.add_argument("--mongo-db", default="deco")
     parser.add_argument("--mongo-records-collection", default="records")
     parser.add_argument("--mongo-vectors-collection", default="vectors")
+    parser.add_argument("--meili-url", default=os.environ.get("MEILI_URL", "http://localhost:7700"))
+    parser.add_argument("--meili-key", default=os.environ.get("MEILI_KEY"))
+    parser.add_argument("--meili-index", default="deco-vectors")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -122,7 +132,17 @@ def main() -> None:
     store = MongoRecordStore(db[args.mongo_records_collection])
     cache = ImageCache(cfg.paths.image_cache_dir)
     embedder = DinoV2OnnxEmbedder(args.model, cfg.embedding.model_version)
-    sink = MongoVectorSink(db[args.mongo_vectors_collection])
+
+    sink: VectorSink
+    if args.sink == "meili":
+        import meilisearch
+
+        from deco.index.meili import MeiliVectorIndex
+
+        meili_client = meilisearch.Client(args.meili_url, args.meili_key)
+        sink = MeiliVectorIndex(meili_client.index(args.meili_index))
+    else:
+        sink = MongoVectorSink(db[args.mongo_vectors_collection])
 
     stats = run_embed_pass(store, cache, embedder, sink)
 

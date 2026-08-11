@@ -15,7 +15,13 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Hit:
-    """A single search result: a record id and its similarity score."""
+    """A single search result: a record id and its similarity score.
+
+    Contract: `score` is cosine similarity in [-1, 1] (it flows unchanged into
+    `RankedCandidate.cosine` and is compared against `gate.min_cosine`).
+    Backends whose native score is on a different scale (e.g. Meilisearch's
+    [0, 1] ranking score) must map it to cosine before returning a `Hit`.
+    """
 
     record_id: str
     score: float

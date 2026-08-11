@@ -62,6 +62,31 @@ def test_fetch_with_backoff_retries_then_succeeds():
     assert sleeps == [1, 2]
 
 
+def test_fetch_with_backoff_retries_403_then_succeeds():
+    statuses = iter([403, 429, 200])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        status = next(statuses)
+        if status == 200:
+            return httpx.Response(200, content=b"image-bytes")
+        return httpx.Response(status)
+
+    sleeps: list[float] = []
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    response = fetch_with_backoff(
+        client,
+        "https://images.example.com/a.jpg",
+        limiter=NullLimiter(),
+        max_backoff_s=60.0,
+        sleep=sleeps.append,
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"image-bytes"
+    assert sleeps == [1, 2]
+
+
 def test_fetch_with_backoff_raises_after_exhausting_retries():
     calls = 0
 

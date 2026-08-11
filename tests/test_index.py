@@ -82,6 +82,15 @@ def test_readd_same_record_id_replaces_not_duplicates():
     assert hits[0].score == 1.0
 
 
+def test_ranking_score_to_cosine_maps_0_1_range_to_minus1_1():
+    from deco.index.meili import _ranking_score_to_cosine
+
+    assert _ranking_score_to_cosine(1.0) == pytest.approx(1.0)
+    assert _ranking_score_to_cosine(0.5) == pytest.approx(0.0)
+    assert _ranking_score_to_cosine(0.0) == pytest.approx(-1.0)
+    assert _ranking_score_to_cosine(0.775) == pytest.approx(0.55)
+
+
 @pytest.mark.integration
 def test_meili_vector_index_add_has_search():
     meili_url = os.environ.get("MEILI_URL")

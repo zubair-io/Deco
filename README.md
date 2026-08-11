@@ -62,9 +62,13 @@ All configuration is in `config/deco.toml`. Key settings:
 - `retrieval.top_k`: Candidates to re-rank (50 default)
 - `retrieval.rerank_top_n`: Final ranked results (5 default)
 - `embedding.model_version`: DINOv2 model variant
-- `ingest.rate_limit_rps`: Images per second (2.0 default)
+- `ingest.rate_limit_rps`: Images per second (1.0 default)
 
 Environment variable `DECO_CONFIG` overrides config path.
+
+Ingest retries 403/429/5xx responses with exponential backoff (the Met
+Collection API's Incapsula bot protection soft-blocks with 403 under burst
+traffic, not just a hard auth failure — see `docs/spikes/met-rate-limits.md`).
 
 ## Development
 
